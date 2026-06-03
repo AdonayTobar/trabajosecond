@@ -196,6 +196,18 @@
     let nextId = 1;
     function newId() { return nextId++; }
 
+    function normalizeDate(str) {
+      if (!str) return '';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+      const m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+      if (m) {
+        let year = parseInt(m[3]);
+        if (year < 100) year += 2000;
+        return `${year}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+      }
+      return str;
+    }
+
     function loadExampleData() {
       transactions = [
         { id: newId(), date: "2025-05-01", card: "•••• 4242", employee: "Juan Pérez", description: "Repsol - Combustible", category: "Gas", amount: 245.50, bank: "BCP" },
@@ -217,7 +229,11 @@
     function loadData() {
       const saved = localStorage.getItem('expenseTransactions');
       transactions = saved ? JSON.parse(saved) : [];
-      transactions.forEach(t => { if (!t.id) t.id = newId(); });
+      transactions.forEach(t => {
+        if (!t.id) t.id = newId();
+        t.date = normalizeDate(t.date);
+        t.postDate = normalizeDate(t.postDate);
+      });
       if (transactions.length > 0) {
         nextId = Math.max(...transactions.map(t => t.id)) + 1;
       }
@@ -252,31 +268,42 @@
 
       const rows = text.split('\n');
       let added = 0;
+      let skipped = 0;
 
       rows.forEach(row => {
-        if (row.length < 30) return;
-        const cols = row.split('\t');
-        let amount = 0;
-        if (cols.length >= 11) {
-          amount = parseFloat(cols[10]?.replace(/[^0-9.-]/g, '')) || 0;
-        }
-        if (amount > 0 && cols.length >= 4) {
-          transactions.push({
-            id: newId(),
-            card:        cols[0]  ? cols[0].trim()  : '',
-            postDate:    cols[1]  ? cols[1].trim()  : '',
-            date:        cols[2]  ? cols[2].trim()  : '',
-            employee:    cols[3]  ? cols[3].trim()  : '',
-            bank:        cols[4]  ? cols[4].trim()  : '',
-            uses:        cols[5]  ? cols[5].trim()  : '',
-            limit:       cols[6]  ? cols[6].trim()  : '',
-            description: cols[7]  ? cols[7].trim()  : '',
-            category:    cols[8]  ? cols[8].trim()  : 'Otros',
-            negative:    cols[9]  ? cols[9].trim()  : '',
-            amount:      amount
-          });
-          added++;
-        }
+        if (row.trim().length < 5) return;
+        const cols = row.split('\t').map(c => c.trim());
+        if (cols.length < 4) return;
+
+        // Skip header row
+        if (cols[0].toLowerCase() === 'card') return;
+        if (!cols[0]) { skipped++; return; }
+
+        const parseAmt = (str) => parseFloat((str || '').replace(/[$,\s]/g, '')) || 0;
+
+        // Anchor from the RIGHT: last col = amount, second-to-last = negative
+        const n = cols.length;
+        const amount   = parseAmt(cols[n - 1]);
+        const negative = cols[n - 2] || '';
+        const category = cols[n - 3] || 'Otros';
+        // Everything between col[7] and category is description (join if split)
+        const description = cols.slice(7, n - 3).join(' ') || '';
+
+        transactions.push({
+          id:          newId(),
+          card:        cols[0] || '',
+          postDate:    normalizeDate(cols[1] || ''),
+          date:        normalizeDate(cols[2] || ''),
+          employee:    cols[3] || '',
+          bank:        cols[4] || '',
+          uses:        cols[5] || '',
+          limit:       cols[6] || '',
+          description: description,
+          category:    category,
+          negative:    negative,
+          amount:      amount
+        });
+        added++;
       });
 
       if (added > 0) {
@@ -285,7 +312,7 @@
         updateAll();
         hideImportModal();
         document.getElementById('paste-area').value = '';
-        alert(`✅ ${added} transacciones importadas`);
+        alert(`✅ ${added} transacciones importadas${skipped > 0 ? ` (${skipped} filas vacías omitidas)` : ''}`);
       } else {
         alert("No se detectaron datos válidos.");
       }
